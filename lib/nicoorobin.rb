@@ -1,50 +1,40 @@
 require 'pathname'
-require 'prawn'
+require_relative 'fleur'
 
 class Nicoorobin
-    attr_accessor :path, :ext_from, :ext_to, :files, :dest
-    
-    def initialize(path, ext_from="jpg", ext_to="pdf", dest="own")
+    attr_accessor :path, :ext_from, :dest
+
+    def initialize(path,  dest="own", ext_from="jpg")
         @path = path
         @ext_from = ext_from
-        @ext_to = ext_to
         @dest = dest == "own" ? @path : dest
-        @filename = File.basename(path)
     end
 
-    def research
-        begin
-            @files = Pathname.glob("#{@path}/*.#{@ext_from}")
-            raise "No file with the #{@ext_from} extension was found" if @files.empty?
+    def call
+        directory_path = Pathname.new(@path)
+        return nil unless directory_path.directory?
 
-            @files.sort! do |a, b|
-                file_a = Pathname.new(a).basename
-                file_b = Pathname.new(b).basename
-                file_a.sub(".#{@ext_from}", '').to_s.to_i <=> file_b.sub(".#{@ext_from}", '').to_s.to_i
-            end
+        folders = directory_path.children.filter! { |f| f.directory?  && !f.children.empty?}
+        return nil if folders.empty?
 
-            raise 'Error sorting the files.' if @files.empty?
-
-            @files.map! do |file|
-                file.to_path
-            end
-        rescue Exception => e
-            puts e
-            return nil
+        bundles = folders.each_slice(folders.size / 8)
+        threads = []
+        bundles.each do |bundle|
+            threads << Thread.new { perform(bundle) }
         end
+
+        threads.each(&:join)
     end
 
-    def build
-        begin
-            raise "No file with the #{@ext_from} extension was found" if @files.empty?
+    private
 
-            Prawn::Document.generate("#{@dest}/#{@filename}.#{@ext_to}", page_size: "A4") do |pdf|
-                @files.each do |f|
-                    pdf.image f, scale: 1, position: :center, width: 450
-                end
-            end
-        rescue Exception => e
-            puts e
+    def perform(bundler)
+        bundler.each do |folder|
+            fleur = Fleur.new(folder.to_path, @dest, @ext_from)
+            files = Fleur.research(folder.to_path, @ext_from)
+            next if files.nil? || files.empty?
+
+            Fleur.build(@dest, @ext_from, folder.basename, files)
         end
     end
 end
